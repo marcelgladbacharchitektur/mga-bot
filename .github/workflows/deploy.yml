@@ -40,19 +40,40 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # Debug Secret availability
+    - name: Debug Secrets
+      run: |
+        echo "Checking if secrets are available..."
+        if [ -z "${{ secrets.SSH_PRIVATE_KEY_BASE64 }}" ]; then
+          echo "ERROR: SSH_PRIVATE_KEY_BASE64 secret is empty or not set!"
+          echo "Available secrets (names only):"
+          env | grep -E '^[A-Z_]+=' | cut -d= -f1 | sort
+          exit 1
+        else
+          echo "SSH_PRIVATE_KEY_BASE64 is set (length: ${#SSH_PRIVATE_KEY_BASE64} characters)"
+        fi
+    
     # SSH-Schlüssel von Base64 dekodieren und einrichten
     - name: Setup SSH
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY_BASE64 }}" | base64 -d > ~/.ssh/id_ed25519
+        # Try different base64 decode methods
+        echo "Attempting to decode SSH key..."
+        echo "${{ secrets.SSH_PRIVATE_KEY_BASE64 }}" | base64 -d > ~/.ssh/id_ed25519 || {
+          echo "base64 -d failed, trying base64 --decode"
+          echo "${{ secrets.SSH_PRIVATE_KEY_BASE64 }}" | base64 --decode > ~/.ssh/id_ed25519
+        }
         chmod 600 ~/.ssh/id_ed25519
         ssh-keyscan -H 157.90.232.184 >> ~/.ssh/known_hosts
         
-        # Verify key format
-        echo "Key file created, checking format..."
-        head -n 1 ~/.ssh/id_ed25519
-        echo "..."
-        tail -n 1 ~/.ssh/id_ed25519
+        # Verify key was created
+        if [ -f ~/.ssh/id_ed25519 ]; then
+          echo "SSH key file created successfully"
+          ls -la ~/.ssh/id_ed25519
+        else
+          echo "ERROR: SSH key file was not created!"
+          exit 1
+        fi
 
     # Schritt 3: Deployment-Skript sicher ausführen
     - name: Deploy to Server
