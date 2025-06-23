@@ -40,23 +40,19 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Debug: SSH Key Format überprüfen
-    - name: Debug SSH Key
-      run: |
-        echo "Checking SSH key format..."
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" | head -n 1
-        echo "..."
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" | tail -n 1
-        echo "Total lines:"
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" | wc -l
-    
-    # Schritt 1: SSH-Schlüssel manuell einrichten
+    # SSH-Schlüssel von Base64 dekodieren und einrichten
     - name: Setup SSH
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        echo "${{ secrets.SSH_PRIVATE_KEY_BASE64 }}" | base64 -d > ~/.ssh/id_ed25519
         chmod 600 ~/.ssh/id_ed25519
         ssh-keyscan -H 157.90.232.184 >> ~/.ssh/known_hosts
+        
+        # Verify key format
+        echo "Key file created, checking format..."
+        head -n 1 ~/.ssh/id_ed25519
+        echo "..."
+        tail -n 1 ~/.ssh/id_ed25519
 
     # Schritt 3: Deployment-Skript sicher ausführen
     - name: Deploy to Server
