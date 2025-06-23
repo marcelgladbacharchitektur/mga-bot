@@ -38,23 +38,11 @@ SUPABASE_ANON_KEY = os.getenv('SUPABASE_ANON_KEY', '')
 # Initialize Flask
 app = Flask(__name__)
 
-# Initialize services
-if not GROQ_API_KEY:
-    logger.error("GROQ_API_KEY not found in environment variables")
-    raise ValueError("GROQ_API_KEY is required")
-
-groq_client = Groq(api_key=GROQ_API_KEY)
-
-# Initialize Supabase client if credentials available
+# Global variables for services (will be initialized in main)
+groq_client = None
 supabase_client: Optional[Client] = None
-if SUPABASE_URL and SUPABASE_ANON_KEY:
-    try:
-        supabase_client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-        logger.info("✅ Supabase client initialized successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Supabase client: {e}")
-else:
-    logger.warning("⚠️  Supabase credentials not found - database integration disabled")
+drive_service = None
+calendar_service = None
 
 def get_google_services():
     """Initialize both Drive and Calendar services"""
@@ -91,7 +79,7 @@ def get_google_services():
         logger.error(f"Failed to initialize Google services: {e}")
         raise
 
-drive_service, calendar_service = get_google_services()
+# Services will be initialized in init_services()
 
 # Calendar helper functions
 def get_calendar_events(days_ahead: int = 7) -> List[Dict[str, Any]]:
@@ -825,7 +813,36 @@ def health():
         }
     })
 
+def init_services():
+    """Initialize all external services"""
+    global groq_client, supabase_client, drive_service, calendar_service
+    
+    # Initialize Groq
+    if not GROQ_API_KEY:
+        logger.error("GROQ_API_KEY not found in environment variables")
+        raise ValueError("GROQ_API_KEY is required")
+    
+    groq_client = Groq(api_key=GROQ_API_KEY)
+    
+    # Initialize Supabase
+    if SUPABASE_URL and SUPABASE_ANON_KEY:
+        try:
+            supabase_client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+            logger.info("✅ Supabase client initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Supabase client: {e}")
+    else:
+        logger.warning("⚠️  Supabase credentials not found - database integration disabled")
+    
+    # Initialize Google services
+    drive_service, calendar_service = get_google_services()
+    
+    return groq_client, supabase_client, drive_service, calendar_service
+
 if __name__ == '__main__':
+    # Initialize all services
+    init_services()
+    
     logger.info("🚀 MGA Telegram Bot starting...")
     logger.info(f"📱 Bot Token: {TELEGRAM_BOT_TOKEN[:10]}...")
     logger.info(f"🧠 AI Provider: Groq (Llama 3.3)")
