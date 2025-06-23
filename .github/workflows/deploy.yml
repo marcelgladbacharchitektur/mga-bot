@@ -40,25 +40,66 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup SSH Key
+    # Schritt 1: SSH-Schlüssel sicher einrichten
+    - name: Install SSH Key
+      uses: shimataro/ssh-key-action@v2
+      with:
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        name: id_ed25519 # Name der Schlüsseldatei
+        known_hosts: 'just-a-placeholder-so-we-dont-get-errors'
+
+    # Schritt 2: Known Hosts Eintrag für den Server hinzufügen
+    - name: Add to Known Hosts
+      run: ssh-keyscan -H 157.90.232.184 >> ~/.ssh/known_hosts
+
+    # Schritt 3: Deployment-Skript sicher ausführen
+    - name: Deploy to Server
+      env: # Umgebungsvariablen für das Remote-Skript
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       run: |
-        # Create .ssh directory
-        mkdir -p ~/.ssh
-        
-        # Write private key to file
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
-        
-        # Add known hosts to avoid prompt
-        ssh-keyscan -H 157.90.232.184 >> ~/.ssh/known_hosts
-    
-    - name: Test SSH Connection
-      run: |
-        # Test SSH connection with explicit key file
-        ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@157.90.232.184 '
-          echo "✅ SSH connection successful."
-          echo "✅ Current directory is:"
-          pwd
-          echo "✅ User is:"
-          whoami
-        '
+        ssh -i ~/.ssh/id_ed25519 root@157.90.232.184 'bash -s' <<'EOF'
+          # Dieses Skript wird jetzt sicher auf dem Server ausgeführt
+          echo "✅ SSH connection successful. Deploying..."
+          
+          # Fehlerbehandlung: Skript bei Fehler abbrechen
+          set -e
+
+          # Navigate to project directory
+          cd /var/www/mga-portal
+          
+          # Pull latest changes
+          echo "🔄 Pulling latest changes..."
+          git pull origin main
+          
+          # Install/update dependencies
+          echo "📦 Installing dependencies..."
+          pip3 install -r requirements.txt
+          
+          # Create environment file for PM2
+          echo "🔧 Creating .env file..."
+          cat > .env <<INNER_EOF
+          TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+          GROQ_API_KEY=${GROQ_API_KEY}
+          GOOGLE_SERVICE_ACCOUNT_JSON=${GOOGLE_SERVICE_ACCOUNT_JSON}
+          GOOGLE_DRIVE_ROOT_FOLDER_ID=${GOOGLE_DRIVE_ROOT_FOLDER_ID}
+          SUPABASE_URL=${SUPABASE_URL}
+          SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+INNER_EOF
+          
+          # Manage PM2 process
+          echo "🔄 Managing PM2 process..."
+          pm2 restart telegram-google --update-env || pm2 start src/telegram_agent_google.py --name telegram-google --interpreter python3
+          
+          # Save PM2 configuration
+          pm2 save
+          
+          echo "📊 PM2 Status:"
+          pm2 list
+
+          echo "✅ Deployment completed successfully!"
+        EOF
