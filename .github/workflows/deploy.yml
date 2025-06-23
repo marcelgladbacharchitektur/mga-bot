@@ -40,17 +40,23 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Schritt 1: SSH-Schlüssel sicher einrichten
-    - name: Install SSH Key
-      uses: shimataro/ssh-key-action@v2
-      with:
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        name: id_ed25519 # Name der Schlüsseldatei
-        known_hosts: 'just-a-placeholder-so-we-dont-get-errors'
-
-    # Schritt 2: Known Hosts Eintrag für den Server hinzufügen
-    - name: Add to Known Hosts
-      run: ssh-keyscan -H 157.90.232.184 >> ~/.ssh/known_hosts
+    # Debug: SSH Key Format überprüfen
+    - name: Debug SSH Key
+      run: |
+        echo "Checking SSH key format..."
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" | head -n 1
+        echo "..."
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" | tail -n 1
+        echo "Total lines:"
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" | wc -l
+    
+    # Schritt 1: SSH-Schlüssel manuell einrichten
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        ssh-keyscan -H 157.90.232.184 >> ~/.ssh/known_hosts
 
     # Schritt 3: Deployment-Skript sicher ausführen
     - name: Deploy to Server
