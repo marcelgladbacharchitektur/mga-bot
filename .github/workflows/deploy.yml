@@ -40,15 +40,25 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Setup SSH Key
+      run: |
+        # Create .ssh directory
+        mkdir -p ~/.ssh
+        
+        # Write private key to file
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        
+        # Add known hosts to avoid prompt
+        ssh-keyscan -H 157.90.232.184 >> ~/.ssh/known_hosts
+    
     - name: Test SSH Connection
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: 157.90.232.184
-        username: root
-        key: ${{ secrets.SSH_PRIVATE_KEY }}
-        script: |
+      run: |
+        # Test SSH connection with explicit key file
+        ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@157.90.232.184 '
           echo "✅ SSH connection successful."
           echo "✅ Current directory is:"
           pwd
           echo "✅ User is:"
           whoami
+        '
