@@ -40,61 +40,15 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Deploy to Server
+    - name: Test SSH Connection
       uses: appleboy/ssh-action@v1.0.3
-      env:
-        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-        GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-        GOOGLE_DRIVE_ROOT_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
-        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       with:
         host: 157.90.232.184
         username: root
         key: ${{ secrets.SSH_PRIVATE_KEY }}
-        envs: TELEGRAM_BOT_TOKEN,GROQ_API_KEY,GOOGLE_SERVICE_ACCOUNT_JSON,GOOGLE_DRIVE_ROOT_FOLDER_ID,SUPABASE_URL,SUPABASE_ANON_KEY
         script: |
-          # Verify SSH connection
-          echo "✅ SSH connection successful. Starting deployment..."
-          
-          # Navigate to project directory
-          cd /var/www/mga-portal
-          
-          # Pull latest changes
-          echo "🔄 Pulling latest changes..."
-          git pull origin main
-          
-          # Install/update dependencies
-          echo "📦 Installing dependencies..."
-          pip3 install -r requirements.txt
-          
-          # Create environment file for PM2
-          echo "🔧 Creating environment file..."
-          cat > .env << EOF
-          TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-          GROQ_API_KEY=${GROQ_API_KEY}
-          GOOGLE_SERVICE_ACCOUNT_JSON=${GOOGLE_SERVICE_ACCOUNT_JSON}
-          GOOGLE_DRIVE_ROOT_FOLDER_ID=${GOOGLE_DRIVE_ROOT_FOLDER_ID}
-          SUPABASE_URL=${SUPABASE_URL}
-          SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
-          EOF
-          
-          # Check if PM2 process exists
-          echo "🔄 Managing PM2 process..."
-          if pm2 list | grep -q "telegram-google"; then
-            echo "Restarting existing process..."
-            pm2 restart telegram-google --update-env
-          else
-            echo "Starting new process..."
-            pm2 start src/telegram_agent_google.py --name telegram-google --interpreter python3
-          fi
-          
-          # Save PM2 configuration
-          pm2 save
-          
-          # Show status
-          echo "📊 PM2 Status:"
-          pm2 list
-          
-          echo "✅ Deployment completed successfully!"
+          echo "✅ SSH connection successful."
+          echo "✅ Current directory is:"
+          pwd
+          echo "✅ User is:"
+          whoami
