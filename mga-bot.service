@@ -1,0 +1,25 @@
+[Unit]
+Description=MGA Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/mga-portal
+Environment="PATH=/usr/bin:/usr/local/bin"
+EnvironmentFile=/var/www/mga-portal/.env
+ExecStart=/usr/bin/python3 /var/www/mga-portal/src/bot/telegram_agent_google.py
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mga-bot
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

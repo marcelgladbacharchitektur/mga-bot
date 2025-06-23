@@ -1,0 +1,1 @@
+send_telegram_message(chat_id, f'🚨 **Fehler:** Das Projekt "{project_identifier}" konnte nicht gefunden werden.\n\nBitte geben Sie eine gültige Projektnummer oder einen Namen an.\n\n💡 Verfügbare Projekte im Portal anzeigen: [portal.marcelgladbach.com](https://portal.marcelgladbach.com)')

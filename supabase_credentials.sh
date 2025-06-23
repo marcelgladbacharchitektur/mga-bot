@@ -1,0 +1,4 @@
+#!/bin/bash
+# Supabase Credentials for MGA Bot
+export SUPABASE_URL="https://glfwdqaubkbxndsyhmyd.supabase.co"
+export SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdsZndkcWF1YmtieG5kc3lobXlkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA2OTM4MTYsImV4cCI6MjA2NjI2OTgxNn0.6Dy0JkLQLNa2exTN9YDuHhs6rcD4SMG90fCOmzaETJk"
