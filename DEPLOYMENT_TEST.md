@@ -2,10 +2,10 @@
 
 Diese Datei testet die CI/CD-Pipeline.
 
-Timestamp: 2025-06-24 01:25:00 UTC
+Timestamp: 2025-06-24 01:45:00 UTC
 
 Test nach SSH-Key Update.
 
-Testing with completely new SSH keypair (github_deploy_key).
+Testing with RSA keypair instead of ED25519.
 
-Using Base64-encoded SSH key.
+RSA keys are more compatible with older SSH implementations.
