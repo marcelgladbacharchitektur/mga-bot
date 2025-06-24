@@ -146,27 +146,96 @@ jobs:
             exit 1
           fi
           
-          # Simple PM2 restart without SSL complications
+          # Create HTTP version of bot for nginx proxy
+          echo "📝 Creating HTTP version of bot..."
+          cp src/telegram_agent_google.py src/telegram_agent_google_http.py
+          sed -i 's/port=8443/port=5000/g' src/telegram_agent_google_http.py
+          sed -i 's/SSL Webhook ready on port 8443/HTTP Webhook ready on port 5000/g' src/telegram_agent_google_http.py
+          
+          # Setup nginx if not already configured
+          if [ ! -f /etc/nginx/sites-available/bot.marcelgladbach.com ]; then
+            echo "🔧 Setting up nginx for bot.marcelgladbach.com..."
+            cat > /tmp/bot.marcelgladbach.com.conf << 'NGINX_CONFIG'
+server {
+    listen 80;
+    server_name bot.marcelgladbach.com;
+    return 301 https://$server_name$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name bot.marcelgladbach.com;
+    
+    ssl_certificate /etc/letsencrypt/live/marcelgladbach.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/marcelgladbach.com/privkey.pem;
+    
+    location /telegram-webhook {
+        proxy_pass http://localhost:5000/telegram-webhook;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    location /health {
+        proxy_pass http://localhost:5000/health;
+    }
+    
+    location / {
+        return 200 'MGA Telegram Bot Service\n';
+        add_header Content-Type text/plain;
+    }
+}
+NGINX_CONFIG
+            
+            sudo cp /tmp/bot.marcelgladbach.com.conf /etc/nginx/sites-available/bot.marcelgladbach.com
+            sudo ln -sf /etc/nginx/sites-available/bot.marcelgladbach.com /etc/nginx/sites-enabled/
+            sudo nginx -t && sudo systemctl reload nginx
+          fi
+          
+          # Restart bot process
           echo "🔄 Restarting bot process..."
-          
-          # Stop any existing process
           pm2 delete telegram-google || true
-          pkill -f telegram_agent_google.py || true
+          pm2 start src/telegram_agent_google_http.py --name telegram-google --interpreter python3
           
-          # Start fresh
-          pm2 start src/telegram_agent_google.py --name telegram-google --interpreter python3
-          
-          # Alternative: Run directly with Python
-          # nohup python3 src/telegram_agent_google.py > bot.log 2>&1 &
+          # Update webhook URL to use bot.marcelgladbach.com
+          export WEBHOOK_DOMAIN="bot.marcelgladbach.com"
           
           pm2 save
           
-          # Register Telegram webhook
+          # Register Telegram webhook with bot.marcelgladbach.com
           echo ""
           echo "🔗 Registering Telegram webhook..."
           cd ${{ secrets.TARGET_DIR }}
-          export SERVER_HOST="${{ secrets.SSH_HOST }}"
-          python3 scripts/register_webhook.py || echo "⚠️  Webhook registration failed"
+          
+          # Update webhook registration script to use new domain
+          python3 << 'WEBHOOK_SCRIPT'
+import os
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+
+token = os.getenv('TELEGRAM_BOT_TOKEN')
+webhook_url = "https://bot.marcelgladbach.com/telegram-webhook"
+
+# Delete old webhook
+delete_resp = requests.get(f"https://api.telegram.org/bot{token}/deleteWebhook")
+print(f"Delete old webhook: {delete_resp.json()}")
+
+# Set new webhook
+response = requests.post(
+    f"https://api.telegram.org/bot{token}/setWebhook",
+    data={'url': webhook_url, 'drop_pending_updates': True}
+)
+
+result = response.json()
+if result.get('ok'):
+    print(f"✅ Webhook registered: {webhook_url}")
+else:
+    print(f"❌ Webhook registration failed: {result}")
+WEBHOOK_SCRIPT
           
           echo "✅ Deployment completed successfully!"
           pm2 list
