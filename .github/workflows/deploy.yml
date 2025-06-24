@@ -3,7 +3,7 @@ name: Deploy Telegram Bot
 on:
   push:
     branches:
-      - main # Pipeline startet bei jedem Push auf den main-Branch
+      - main
 
 jobs:
   test:
@@ -34,64 +34,62 @@ jobs:
   deploy:
     needs: test
     runs-on: ubuntu-latest
-    if: success() # Nur deployen, wenn die Tests erfolgreich waren
+    if: success()
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # Use webfactory/ssh-agent action - industry standard
     - name: Setup SSH
       uses: webfactory/ssh-agent@v0.9.0
       with:
         ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-    # Schritt 3: Deployment-Skript sicher ausführen
-    - name: Deploy to Server
-      env: # Umgebungsvariablen für das Remote-Skript
-        TELEGRAM_BOT_TOKEN: '${{ secrets.TELEGRAM_BOT_TOKEN }}'
-        GROQ_API_KEY: '${{ secrets.GROQ_API_KEY }}'
-        GOOGLE_SERVICE_ACCOUNT_JSON: '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}'
-        GOOGLE_DRIVE_ROOT_FOLDER_ID: '${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}'
-        SUPABASE_URL: '${{ secrets.SUPABASE_URL }}'
-        SUPABASE_ANON_KEY: '${{ secrets.SUPABASE_ANON_KEY }}'
+    - name: Add host to known_hosts
       run: |
-        ssh -i ~/.ssh/id_ed25519 root@157.90.232.184 'bash -s' <<'EOF'
-          # Dieses Skript wird jetzt sicher auf dem Server ausgeführt
-          echo "✅ SSH connection successful. Deploying..."
-          
-          # Fehlerbehandlung: Skript bei Fehler abbrechen
-          set -e
+        mkdir -p ~/.ssh
+        ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
-          # Navigate to project directory
-          cd /var/www/mga-portal
+    - name: Create .env file
+      run: |
+        cat > .env <<EOF
+        TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+        GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+        GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        GOOGLE_DRIVE_ROOT_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+        SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+        EOF
+
+    - name: Deploy with rsync
+      run: |
+        # Sync Python files, requirements, and tests
+        rsync -avz --delete \
+          --include='*.py' \
+          --include='requirements.txt' \
+          --include='tests/' \
+          --include='tests/**' \
+          --include='.env' \
+          --exclude='.*' \
+          --exclude='__pycache__/' \
+          --exclude='*.pyc' \
+          --exclude='venv/' \
+          --exclude='github_deploy*' \
+          ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.TARGET_DIR }}/
+
+    - name: Post-deployment tasks
+      run: |
+        ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'bash -s' <<'EOF'
+          set -e
+          cd ${{ secrets.TARGET_DIR }}
           
-          # Pull latest changes
-          echo "🔄 Pulling latest changes..."
-          git pull origin main
-          
-          # Install/update dependencies
           echo "📦 Installing dependencies..."
           pip3 install -r requirements.txt
           
-          # Create environment file for PM2
-          echo "🔧 Creating .env file..."
-          echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" > .env
-          echo "GROQ_API_KEY=${GROQ_API_KEY}" >> .env
-          echo "GOOGLE_SERVICE_ACCOUNT_JSON=${GOOGLE_SERVICE_ACCOUNT_JSON}" >> .env
-          echo "GOOGLE_DRIVE_ROOT_FOLDER_ID=${GOOGLE_DRIVE_ROOT_FOLDER_ID}" >> .env
-          echo "SUPABASE_URL=${SUPABASE_URL}" >> .env
-          echo "SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}" >> .env
-          
-          # Manage PM2 process
-          echo "🔄 Managing PM2 process..."
-          pm2 restart telegram-google --update-env || pm2 start src/telegram_agent_google.py --name telegram-google --interpreter python3
-          
-          # Save PM2 configuration
+          echo "🔄 Restarting PM2 process..."
+          pm2 restart telegram-google --update-env || pm2 start telegram_agent_google.py --name telegram-google --interpreter python3
           pm2 save
           
-          echo "📊 PM2 Status:"
+          echo "✅ Deployment completed!"
           pm2 list
-
-          echo "✅ Deployment completed successfully!"
         EOF

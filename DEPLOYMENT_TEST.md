@@ -9,3 +9,5 @@ Test nach SSH-Key Update.
 Testing with RSA keypair instead of ED25519.
 
 RSA keys are more compatible with older SSH implementations.
+
+Testing rsync-based deployment with new GitHub secrets configured.
