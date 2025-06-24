@@ -267,34 +267,53 @@ def send_telegram_message(chat_id: int, text: str) -> bool:
 def analyze_with_groq(text: str) -> Dict[str, Any]:
     """Analyze text with Groq AI - Enhanced for time tracking"""
     try:
-        system_prompt = """Du bist ein KI-Assistent für das Architekturbüro Marcel Gladbach in TIROL, ÖSTERREICH.
-        Analysiere die Nachricht und erkenne die Absicht.
-        
-        Mögliche Intents:
-        - CREATE_PROJECT: Neues Projekt anlegen
-        - RECORD_TIME: Zeit erfassen (z.B. "3h auf Projekt X", "buche 2 stunden", "gestern 4h gearbeitet")
-        - CREATE_TASK: Aufgabe erstellen  
-        - LOG_TIME: Zeit erfassen (alte Version, behandle wie RECORD_TIME)
-        - HELP: Hilfe
-        - UNKNOWN: Unbekannt
-        
-        Für RECORD_TIME extrahiere:
-        - duration_hours: Anzahl der Stunden (z.B. 3, 2.5, 4)
-        - project_identifier: Projektname oder -nummer (z.B. "25-003", "Projekt X", "WP04")
-        - activity_description: Beschreibung der Tätigkeit
-        - entry_date: Datum im Format YYYY-MM-DD (heute wenn nicht angegeben, "gestern" = gestern)
-        
-        Extrahiere auch für andere Intents:
-        - project: Projektname
-        - content: Inhalt
-        - hours: Stunden
-        
-        WICHTIG: Erkenne relative Zeitangaben:
-        - "heute" = aktuelles Datum
-        - "gestern" = gestriges Datum
-        - "vorgestern" = vorgestriges Datum
-        
-        Antworte im JSON-Format.
+        system_prompt = """Du bist ein hochintelligenter und proaktiver Assistent für ein Architekturbüro. Deine Aufgabe ist es, aus einem freien, natürlichen Gespräch die Absichten des Architekten zu interpretieren und sie in strukturierte JSON-Aktionen umzuwandeln. Denke mit, antizipiere den nächsten Schritt.
+
+=== KERNFÄHIGKEITEN ===
+• **Projekterstellung**: Erkenne, wenn ein neues Projekt erwähnt wird. Interpretiere Aussagen wie "wir haben den auftrag für familie müller bekommen" als Projekterstellung.
+• **Zeiterfassung**: Verstehe jede Erwähnung von aufgewendeter Zeit. Auch Sätze wie "der ganze vormittag ging für die planung von P05 drauf" (interpretiere "ganzer vormittag" als ca. 4 Stunden).
+• **Aufgaben- & Notizverwaltung**: Alles, was wie eine Notiz, eine Erinnerung oder ein "TODO" klingt, wird als Aufgabe erfasst.
+• **Terminplanung**: Erkenne jegliche Erwähnung von zukünftigen Terminen.
+
+=== DEINE DENKWEISE ===
+1. **Was ist die wirkliche Absicht?** Wenn der Nutzer sagt "gestern stressiger tag mit müller", könnte das eine Zeiterfassung sein. Frage nach: "Soll ich dafür Zeit auf das Projekt Müller buchen?"
+2. **Welche Informationen fehlen?** Wenn der Nutzer sagt "termin mit dem statiker", frage nach: "Verstanden. Wann soll der Termin stattfinden?"
+3. **Sei präzise:** Gib immer das zurück, was du verstanden hast.
+4. **Biete Mehrwert:** Schlage proaktiv sinnvolle Ergänzungen vor.
+
+=== KONTEXT VERSTÄNDNIS ===
+• "vormittag" = ca. 4 Stunden
+• "nachmittag" = ca. 4 Stunden  
+• "ganzer tag" = ca. 8 Stunden
+• "kurz" = ca. 0.5 Stunden
+• "länger" = ca. 2-3 Stunden
+
+=== MÖGLICHE INTENTS ===
+- CREATE_PROJECT: Neues Projekt anlegen
+- RECORD_TIME: Zeit erfassen 
+- CREATE_TASK: Aufgabe/Notiz erstellen
+- SCHEDULE_APPOINTMENT: Termin planen
+- SHOW_SUMMARY: Übersicht anzeigen
+- HELP: Hilfe anfordern
+- UNKNOWN: Unklar (nachfragen!)
+
+=== JSON-FORMAT ===
+{
+  "intent": "INTENT_NAME",
+  "entities": {
+    // Relevante Daten je nach Intent
+    "project_identifier": "...",
+    "duration_hours": 0.0,
+    "activity_description": "...",
+    "entry_date": "YYYY-MM-DD",
+    "priority": "hoch|mittel|niedrig"
+  },
+  "confidence_score": 0.9,
+  "interpretation": "Das habe ich verstanden: ...",
+  "follow_up_question": "Soll ich auch...?" // Optional, wenn sinnvoll
+}
+
+WICHTIG: Bei Unsicherheit IMMER nachfragen statt zu raten!
         """
         
         response = groq_client.chat.completions.create(
@@ -571,10 +590,35 @@ def webhook():
             # 2. AI ANALYSE
             ai_result = analyze_with_groq(text)
             intent = ai_result.get("intent", "UNKNOWN")
+            interpretation = ai_result.get("interpretation", "")
+            follow_up_question = ai_result.get("follow_up_question", "")
+            
+            # Zeige AI-Interpretation wenn vorhanden
+            if interpretation:
+                send_telegram_message(chat_id, f"🧠 **Verstanden:** {interpretation}")
+            
+            # Bei UNKNOWN Intent direkt nachfragen
+            if intent == "UNKNOWN":
+                response = "🤔 **Entschuldigung, ich bin nicht sicher, was Sie möchten.**\n\n"
+                response += "Ich kann Ihnen bei folgenden Aufgaben helfen:\n"
+                response += "• 🏗️ Neue Projekte anlegen\n"
+                response += "• ⏱️ Arbeitszeit erfassen\n"
+                response += "• 📝 Aufgaben erstellen\n"
+                response += "• 📅 Termine planen\n\n"
+                if follow_up_question:
+                    response += f"💬 {follow_up_question}"
+                else:
+                    response += "Können Sie Ihre Anfrage bitte anders formulieren?"
+                send_telegram_message(chat_id, response)
+                return jsonify({"ok": True})
             
             # 3. VERARBEITUNG mit Status-Updates
+            # Extrahiere entities aus dem neuen Format
+            entities = ai_result.get("entities", {})
+            
             if intent == "CREATE_PROJECT":
-                base_name = ai_result.get("project", "").strip()
+                # Versuche zuerst aus entities zu lesen, dann Fallback zu altem Format
+                base_name = entities.get("project", ai_result.get("project", "")).strip()
                 project_name = format_project_name(base_name)
                 
                 # Status Update
@@ -591,7 +635,7 @@ def webhook():
                     db_status = "✅ In Datenbank gespeichert" if db_saved else "⚠️ Datenbank-Speicherung fehlgeschlagen"
                     
                     # Erfolgreiche Completion
-                    send_telegram_message(chat_id, f"""✅ **PROJEKT ERFOLGREICH ERSTELLT!**
+                    message = f"""✅ **PROJEKT ERFOLGREICH ERSTELLT!**
 
 📁 **Projekt:** `{project_name}`
 🏗️ **Ordner:** {len(PROJECT_FOLDERS)} Standard-Ordner
@@ -600,16 +644,25 @@ def webhook():
 🗄️ **Datenbank:** {db_status}
 🕐 **Erstellt:** {datetime.now().strftime('%d.%m.%Y %H:%M')}
 
-🎉 **Das System funktioniert perfekt!**""")
+🎉 **Das System funktioniert perfekt!**"""
+                    
+                    # Füge Follow-up Frage hinzu falls vorhanden
+                    if follow_up_question:
+                        message += f"\n\n💬 {follow_up_question}"
+                    else:
+                        # Biete proaktiv weitere Aktionen an
+                        message += "\n\n💬 Soll ich gleich einen ersten Termin für das Projekt eintragen?"
+                    
+                    send_telegram_message(chat_id, message)
                 else:
                     send_telegram_message(chat_id, "❌ **Fehler beim Erstellen des Projekts.**\\n\\nBitte versuchen Sie es erneut oder kontaktieren Sie den Support.")
                     
             elif intent == "RECORD_TIME":
-                # Extract time tracking data
-                duration_hours = ai_result.get("duration_hours", 0)
-                project_identifier = ai_result.get("project_identifier", "")
-                activity_description = ai_result.get("activity_description", "")
-                entry_date_raw = ai_result.get("entry_date", "")
+                # Extract time tracking data from entities first, then fallback to old format
+                duration_hours = entities.get("duration_hours", ai_result.get("duration_hours", 0))
+                project_identifier = entities.get("project_identifier", ai_result.get("project_identifier", ""))
+                activity_description = entities.get("activity_description", ai_result.get("activity_description", ""))
+                entry_date_raw = entities.get("entry_date", ai_result.get("entry_date", ""))
                 
                 # Parse and validate data
                 try:
@@ -635,7 +688,7 @@ def webhook():
                     # Format date for display
                     entry_date_display = datetime.strptime(entry_date, '%Y-%m-%d').strftime('%d.%m.%Y')
                     
-                    send_telegram_message(chat_id, f"""✅ **Zeit erfasst!**
+                    message = f"""✅ **Zeit erfasst!**
 
 📁 **Projekt:** {project['name']}
 ⏱️ **Dauer:** {duration_hours} Stunden
@@ -645,16 +698,24 @@ def webhook():
 
 💡 **Tipp:** Sie können auch relative Zeitangaben verwenden:
 - "gestern 3h an 25-003 gearbeitet"
-- "vorgestern 2.5h Planung für WP04"
-""")
+- "vorgestern 2.5h Planung für WP04\""""
+                    
+                    # Füge Follow-up Frage hinzu falls vorhanden
+                    if follow_up_question:
+                        message += f"\n\n💬 {follow_up_question}"
+                    else:
+                        # Biete proaktiv weitere Aktionen an
+                        message += "\n\n💬 Möchten Sie noch weitere Zeiten erfassen?"
+                    
+                    send_telegram_message(chat_id, message)
                 else:
                     send_telegram_message(chat_id, "❌ **Fehler beim Speichern der Zeiterfassung.**\\n\\nBitte versuchen Sie es erneut.")
                     
             elif intent == "CREATE_TASK":
-                # Extract task data
-                task_content = ai_result.get("task_description", ai_result.get("content", ""))
-                priority = ai_result.get("priority", "mittel").lower()
-                project_identifier = ai_result.get("project_identifier")
+                # Extract task data from entities first, then fallback to old format
+                task_content = entities.get("task_description", ai_result.get("task_description", ai_result.get("content", "")))
+                priority = entities.get("priority", ai_result.get("priority", "mittel")).lower()
+                project_identifier = entities.get("project_identifier", ai_result.get("project_identifier"))
                 
                 # Extract Tirol-specific info
                 tags = extract_tirol_tags(task_content)
