@@ -48,223 +48,76 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Validate secrets
-      run: |
-        if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
-          echo "::error::SSH_PRIVATE_KEY secret is not set"
-          exit 1
-        fi
-        if [ -z "${{ secrets.SSH_HOST }}" ]; then
-          echo "::error::SSH_HOST secret is not set"
-          exit 1
-        fi
-        if [ -z "${{ secrets.SSH_USER }}" ]; then
-          echo "::error::SSH_USER secret is not set"
-          exit 1
-        fi
-        if [ -z "${{ secrets.TARGET_DIR }}" ]; then
-          echo "::error::TARGET_DIR secret is not set"
-          exit 1
-        fi
+    - name: Deploy to Server via SSH (Docker)
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: 157.90.232.184
+        username: root
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          # Fehlerbehandlung
+          set -e
 
-    - name: Setup SSH
-      run: |
-        mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        
-        # Test if the key is valid
-        ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null || {
-          echo "::error::SSH key format error. Please ensure your SSH key is in PEM format."
-          echo "::error::If using a newer OpenSSH format, convert it with: ssh-keygen -p -f your_key -m PEM"
-          exit 1
-        }
+          # Gehe zum Projektverzeichnis
+          cd /var/www/mga-portal
+          
+          # Hole den neuesten Code
+          echo "🔄 Pulling latest changes..."
+          git pull origin main
 
-    - name: Add SSH Host to known_hosts
-      run: |
-        mkdir -p ~/.ssh
-        ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
-
-    - name: Create encoded .env file
-      run: |
-        cat > .env <<EOF
-        TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
-        GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
-        GOOGLE_SERVICE_ACCOUNT_JSON='${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}'
-        GOOGLE_DRIVE_ROOT_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
-        SUPABASE_URL=${{ secrets.SUPABASE_URL }}
-        SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
-        EOF
-        
-        # Base64 encode the .env file for secure transfer
-        base64 -w 0 .env > .env.b64
-
-    - name: Deploy with rsync
-      run: |
-        # Sync Python files, requirements, and tests
-        rsync -avz --delete \
-          --include='*.py' \
-          --include='requirements.txt' \
-          --include='tests/' \
-          --include='tests/**' \
-          --include='.env.b64' \
-          --exclude='.*' \
-          --exclude='__pycache__/' \
-          --exclude='*.pyc' \
-          --exclude='venv/' \
-          --exclude='github_deploy*' \
-          --exclude='.env' \
-          ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.TARGET_DIR }}/
-
-    - name: Post-deployment tasks
-      run: |
-        ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'bash -s' <<'DEPLOY_SCRIPT'
-          set -euo pipefail
+          # Übergebe die Secrets als Umgebungsvariablen an Docker Compose
+          export TELEGRAM_BOT_TOKEN='${{ secrets.TELEGRAM_BOT_TOKEN }}'
+          export GROQ_API_KEY='${{ secrets.GROQ_API_KEY }}'
+          export GOOGLE_SERVICE_ACCOUNT_JSON_BASE64='${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON_BASE64 }}'
+          export GOOGLE_DRIVE_ROOT_FOLDER_ID='${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}'
+          export SUPABASE_URL='${{ secrets.SUPABASE_URL }}'
+          export SUPABASE_ANON_KEY='${{ secrets.SUPABASE_ANON_KEY }}'
           
-          # Function to handle errors
-          error_handler() {
-            echo "❌ Error occurred during deployment on line $1"
-            exit 1
-          }
-          trap 'error_handler $LINENO' ERR
-          
-          cd ${{ secrets.TARGET_DIR }}
-          
-          # Decode the .env file
-          echo "🔐 Setting up environment variables..."
-          base64 -d .env.b64 > .env
-          rm -f .env.b64
-          chmod 600 .env
-          
-          echo "📦 Installing dependencies..."
-          pip3 install --user -r requirements.txt
-          
-          echo "🔄 Managing PM2 process..."
-          # Check if PM2 is installed
-          if ! command -v pm2 &> /dev/null; then
-            echo "PM2 not found. Please install PM2 first."
-            exit 1
+          # Erstelle project_counter.json falls nicht vorhanden
+          if [ ! -f project_counter.json ]; then
+            echo '{"counter": 0}' > project_counter.json
           fi
           
-          # Create HTTP version of bot for nginx proxy
-          echo "📝 Creating HTTP version of bot..."
-          cp src/telegram_agent_google.py src/telegram_agent_google_http.py
-          sed -i 's/port=8443/port=5000/g' src/telegram_agent_google_http.py
-          sed -i 's/SSL Webhook ready on port 8443/HTTP Webhook ready on port 5000/g' src/telegram_agent_google_http.py
+          # Baue und starte den Container
+          echo "🐳 Building and starting Docker container..."
+          docker-compose down || true
+          docker-compose up -d --build
           
-          # Setup nginx if not already configured
-          if [ ! -f /etc/nginx/sites-available/bot.marcelgladbach.com ]; then
-            echo "🔧 Setting up nginx for bot.marcelgladbach.com..."
-            cat > /tmp/bot.marcelgladbach.com.conf << 'NGINX_CONFIG'
-server {
-    listen 80;
-    server_name bot.marcelgladbach.com;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name bot.marcelgladbach.com;
-    
-    ssl_certificate /etc/letsencrypt/live/marcelgladbach.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/marcelgladbach.com/privkey.pem;
-    
-    location /telegram-webhook {
-        proxy_pass http://localhost:5000/telegram-webhook;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    
-    location /health {
-        proxy_pass http://localhost:5000/health;
-    }
-    
-    location / {
-        return 200 'MGA Telegram Bot Service\n';
-        add_header Content-Type text/plain;
-    }
-}
-NGINX_CONFIG
-            
-            sudo cp /tmp/bot.marcelgladbach.com.conf /etc/nginx/sites-available/bot.marcelgladbach.com
-            sudo ln -sf /etc/nginx/sites-available/bot.marcelgladbach.com /etc/nginx/sites-enabled/
-            sudo nginx -t && sudo systemctl reload nginx
-          fi
+          # Warte kurz und prüfe den Status
+          sleep 5
+          docker ps | grep mga-bot-container
           
-          # Restart bot process
-          echo "🔄 Restarting bot process..."
-          pm2 delete telegram-google || true
-          pm2 start src/telegram_agent_google_http.py --name telegram-google --interpreter python3
+          # Zeige die letzten Logs
+          echo ""
+          echo "📋 Container logs:"
+          docker logs mga-bot-container --tail 20
           
-          # Update webhook URL to use bot.marcelgladbach.com
-          export WEBHOOK_DOMAIN="bot.marcelgladbach.com"
-          
-          pm2 save
-          
-          # Register Telegram webhook with bot.marcelgladbach.com
+          # Registriere Webhook
           echo ""
           echo "🔗 Registering Telegram webhook..."
-          cd ${{ secrets.TARGET_DIR }}
-          
-          # Update webhook registration script to use new domain
-          python3 << 'WEBHOOK_SCRIPT'
+          docker exec mga-bot-container python -c "
 import os
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
 
 token = os.getenv('TELEGRAM_BOT_TOKEN')
-webhook_url = "https://bot.marcelgladbach.com/telegram-webhook"
+webhook_url = 'https://bot.marcelgladbach.com/telegram-webhook'
 
 # Delete old webhook
-delete_resp = requests.get(f"https://api.telegram.org/bot{token}/deleteWebhook")
-print(f"Delete old webhook: {delete_resp.json()}")
+delete_resp = requests.get(f'https://api.telegram.org/bot{token}/deleteWebhook')
+print(f'Delete old webhook: {delete_resp.json()}')
 
 # Set new webhook
 response = requests.post(
-    f"https://api.telegram.org/bot{token}/setWebhook",
+    f'https://api.telegram.org/bot{token}/setWebhook',
     data={'url': webhook_url, 'drop_pending_updates': True}
 )
 
 result = response.json()
 if result.get('ok'):
-    print(f"✅ Webhook registered: {webhook_url}")
+    print(f'✅ Webhook registered: {webhook_url}')
 else:
-    print(f"❌ Webhook registration failed: {result}")
-WEBHOOK_SCRIPT
+    print(f'❌ Webhook registration failed: {result}')
+"
           
-          echo "✅ Deployment completed successfully!"
-          pm2 list
-          pm2 logs telegram-google --lines 10 --nostream
-          
-          # Debug: Check bot status
           echo ""
-          echo "🔍 Debugging bot status..."
-          echo "========================="
-          
-          # Check if bot file exists
-          if [ -f "src/telegram_agent_google.py" ]; then
-            echo "✅ Bot file exists at src/telegram_agent_google.py"
-          else
-            echo "❌ Bot file not found!"
-            find . -name "telegram_agent_google.py" -type f
-          fi
-          
-          # Check PM2 status in detail
-          pm2 describe telegram-google || true
-          
-          # Try to start bot manually to see errors
-          echo ""
-          echo "🧪 Testing bot startup..."
-          timeout 5 python3 src/telegram_agent_google.py 2>&1 || true
-        DEPLOY_SCRIPT
-
-    - name: Cleanup
-      if: always()
-      run: |
-        rm -f .env .env.b64
-        # SSH agent cleanup is handled automatically by webfactory/ssh-agent
+          echo "✅ Docker deployment completed successfully!"

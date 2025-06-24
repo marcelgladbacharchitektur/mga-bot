@@ -3,20 +3,25 @@ version: '3.8'
 services:
   mga-bot:
     build: .
-    container_name: mga-bot
-    restart: unless-stopped
-    env_file:
-      - .env
+    container_name: mga-bot-container
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - GOOGLE_SERVICE_ACCOUNT_JSON_BASE64=${GOOGLE_SERVICE_ACCOUNT_JSON_BASE64}
+      - GOOGLE_DRIVE_ROOT_FOLDER_ID=${GOOGLE_DRIVE_ROOT_FOLDER_ID}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - PROJECT_COUNTER_FILE=/app/project_counter.json
+      - FLASK_HOST=0.0.0.0
+      - FLASK_PORT=5000
+      - FLASK_ENV=production
     volumes:
       - ./project_counter.json:/app/project_counter.json
-      - ./logs:/app/logs
-      - ./service-account-key.json:/app/service-account-key.json:ro
-    ports:
-      - "8443:8443"
-    networks:
-      - mga-network
-
-networks:
-  mga-network:
-    name: mga-network
-    driver: bridge
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,34 +1,26 @@
-FROM python:3.11-slim
+# Verwende ein offizielles, schlankes Python-Image
+FROM python:3.10-slim
 
-# Set working directory
+# Setze das Arbeitsverzeichnis im Container
 WORKDIR /app
 
-# Install system dependencies
+# Installiere System-Dependencies für Google API Client
 RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Kopiere die Abhängigkeiten-Datei und installiere sie
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY src/ ./src/
-COPY .env* ./
+# Installiere python-dotenv falls noch nicht in requirements.txt
+RUN pip install python-dotenv
 
-# Create necessary directories
-RUN mkdir -p logs
+# Kopiere den gesamten Quellcode in das Arbeitsverzeichnis
+COPY ./src ./src
 
-# Create non-root user
-RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
+# Stelle sicher, dass die .env Datei geladen wird
+ENV PYTHONUNBUFFERED=1
 
-# Switch to non-root user
-USER botuser
-
-# Expose webhook port
-EXPOSE 8443
-
-# Run the bot
-CMD ["python", "src/bot/telegram_agent_google.py"]
+# Definiere den Befehl, der beim Start des Containers ausgeführt wird
+CMD ["python", "src/telegram_agent_google.py"]

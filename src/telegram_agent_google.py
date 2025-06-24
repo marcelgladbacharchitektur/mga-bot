@@ -28,12 +28,14 @@ logger = logging.getLogger(__name__)
 # Configuration - From Environment Variables
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 GROQ_API_KEY = os.getenv('GROQ_API_KEY')
-GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')  # Base64 encoded
+# Support both BASE64 and regular JSON for backwards compatibility
+GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON_BASE64') or os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')  # Base64 encoded
 GOOGLE_DRIVE_ROOT_FOLDER_ID = os.getenv('GOOGLE_DRIVE_ROOT_FOLDER_ID', '0ADxsi_12PIVhUk9PVA')
 
 # Supabase Configuration - From Environment Variables
 SUPABASE_URL = os.getenv('SUPABASE_URL', '')
 SUPABASE_ANON_KEY = os.getenv('SUPABASE_ANON_KEY', '')
+PROJECT_COUNTER_FILE = os.getenv('PROJECT_COUNTER_FILE', 'project_counter.json')
 
 # Initialize Flask
 app = Flask(__name__)
