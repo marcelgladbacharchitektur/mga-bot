@@ -18,6 +18,9 @@ import re
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+# Document indexing imports
+from document_indexer import index_document
+
 # Supabase imports
 from supabase import create_client, Client
 
@@ -45,6 +48,10 @@ groq_client = None
 supabase_client: Optional[Client] = None
 drive_service = None
 calendar_service = None
+
+# Simple session store for pending document uploads
+# In production, use Redis or database
+pending_documents = {}
 
 def get_google_services():
     """Initialize both Drive and Calendar services"""
@@ -294,6 +301,7 @@ def analyze_with_groq(text: str) -> Dict[str, Any]:
 - CREATE_TASK: Aufgabe/Notiz erstellen
 - SCHEDULE_APPOINTMENT: Termin planen
 - SHOW_SUMMARY: Übersicht anzeigen
+- INDEX_DOCUMENT: Dokument indizieren (wird automatisch bei Datei-Upload erkannt)
 - HELP: Hilfe anfordern
 - UNKNOWN: Unklar (nachfragen!)
 
@@ -559,6 +567,60 @@ def ensure_project_structure(project_name: str) -> Tuple[bool, Optional[str], Op
         logger.error(f"❌ Project creation error: {e}")
         return False, None, None
 
+def handle_document_indexing(chat_id: int, file_id: str, file_name: str, project_id: str):
+    """Download document from Telegram and index it"""
+    try:
+        # Get file info from Telegram
+        get_file_url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+        response = requests.get(get_file_url)
+        
+        if response.status_code != 200:
+            send_telegram_message(chat_id, "❌ **Fehler:** Konnte Datei-Informationen nicht abrufen.")
+            return
+        
+        file_info = response.json()
+        if not file_info.get('ok'):
+            send_telegram_message(chat_id, "❌ **Fehler:** Datei nicht gefunden.")
+            return
+        
+        file_path = file_info['result']['file_path']
+        
+        # Download file
+        download_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+        file_response = requests.get(download_url)
+        
+        if file_response.status_code != 200:
+            send_telegram_message(chat_id, "❌ **Fehler:** Konnte Datei nicht herunterladen.")
+            return
+        
+        # Get file content as text (for now, assume it's a text file)
+        try:
+            file_content = file_response.content.decode('utf-8')
+        except:
+            send_telegram_message(chat_id, "❌ **Fehler:** Datei ist kein Textformat. Momentan werden nur Textdateien unterstützt.")
+            return
+        
+        # Index the document
+        send_telegram_message(chat_id, "🔄 **Indiziere Dokument...**\n\nDies kann einen Moment dauern.")
+        
+        result = index_document(file_content, file_name, project_id)
+        
+        if result['success']:
+            send_telegram_message(chat_id, f"""✅ **Dokument erfolgreich indiziert!**
+
+📄 **Dokument:** {result['document_name']}
+📊 **Chunks erstellt:** {result['total_chunks']}
+✅ **Erfolgreich indiziert:** {result['indexed_chunks']}
+❌ **Fehlgeschlagen:** {result['failed_chunks']}
+
+💡 Das Dokument wurde in {result['total_chunks']} durchsuchbare Teile aufgeteilt und kann jetzt für intelligente Suchen verwendet werden.""")
+        else:
+            send_telegram_message(chat_id, f"❌ **Fehler beim Indizieren:** {result.get('error', 'Unbekannter Fehler')}")
+            
+    except Exception as e:
+        logger.error(f"Error in document indexing: {e}")
+        send_telegram_message(chat_id, f"❌ **Fehler:** {str(e)}")
+
 @app.route('/telegram-webhook', methods=['POST'])
 def webhook():
     """Handle Telegram webhook with immediate feedback"""
@@ -570,18 +632,60 @@ def webhook():
         message = update.get('message', {})
         chat_id = message.get('chat', {}).get('id')
         text = message.get('text', '')
+        document = message.get('document')
         from_user = message.get('from', {})
         user_name = from_user.get('first_name', 'Unbekannt')
         user_id = str(from_user.get('id', 'unknown'))
         
         if not chat_id:
             return jsonify({"ok": False, "error": "No chat_id"}), 400
+        
+        # Handle document uploads
+        if document:
+            file_name = document.get('file_name', 'Unbekannt')
+            file_id = document.get('file_id')
+            
+            send_telegram_message(chat_id, f"📄 **Dokument empfangen:** {file_name}\n\n❓ Zu welchem Projekt gehört dieses Dokument?\n\nBitte antworten Sie mit der Projektnummer oder dem Projektnamen.")
+            
+            # Store document info in session
+            pending_documents[chat_id] = {
+                'file_id': file_id,
+                'file_name': file_name,
+                'timestamp': datetime.now()
+            }
+            logger.info(f"Document received: {file_name} (file_id: {file_id})")
+            
+            return jsonify({"ok": True})
             
         if not text:
             send_telegram_message(chat_id, "❓ Bitte senden Sie eine Textnachricht.")
             return jsonify({"ok": True})
             
         logger.info(f"📩 Message from {user_name}: {text}")
+        
+        # Check if we're waiting for a project assignment for a document
+        if chat_id in pending_documents:
+            doc_info = pending_documents[chat_id]
+            
+            # Check if the pending document is not too old (5 minutes timeout)
+            if (datetime.now() - doc_info['timestamp']).seconds < 300:
+                # This is a project assignment for the pending document
+                send_telegram_message(chat_id, f"🔄 **Verarbeite Dokument...**\n\nProjekt: {text}\nDokument: {doc_info['file_name']}")
+                
+                # Find the project
+                project = find_project_by_identifier(text)
+                if project:
+                    # Download and index the document
+                    handle_document_indexing(chat_id, doc_info['file_id'], doc_info['file_name'], project['id'])
+                    # Remove from pending
+                    del pending_documents[chat_id]
+                    return jsonify({"ok": True})
+                else:
+                    send_telegram_message(chat_id, f"❌ **Projekt nicht gefunden:** {text}\n\nBitte geben Sie eine gültige Projektnummer oder einen Projektnamen an.")
+                    return jsonify({"ok": True})
+            else:
+                # Timeout - remove old pending document
+                del pending_documents[chat_id]
         
         # 1. SOFORTIGES FEEDBACK - Empfangsbestätigung
         send_telegram_message(chat_id, f"🤖 **Nachricht empfangen!**\\n\\n💬 Ihre Anfrage: _{text}_\\n\\n🔄 Analysiere mit KI...")

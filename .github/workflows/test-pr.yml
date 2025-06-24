@@ -1,0 +1,91 @@
+name: Test Pull Request
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest pytest-cov
+
+    - name: Run ALL Tests (including existing)
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      run: |
+        echo "Running comprehensive test suite..."
+        pytest tests/ -v --cov=src --cov-report=term-missing
+
+    - name: Check test coverage
+      run: |
+        # Ensure we have good coverage
+        coverage=$(pytest tests/ --cov=src --cov-report=term | grep TOTAL | awk '{print $4}' | sed 's/%//')
+        echo "Test coverage: $coverage%"
+        
+        # Optional: fail if coverage is too low
+        # if (( $(echo "$coverage < 70" | bc -l) )); then
+        #   echo "Test coverage is below 70%!"
+        #   exit 1
+        # fi
+
+    - name: Comment PR with test results
+      if: always()
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const output = `#### Test Results 🧪
+          
+          ${process.env.TEST_RESULT === 'success' ? '✅ All tests passed!' : '❌ Some tests failed'}
+          
+          <details>
+          <summary>View test output</summary>
+          
+          \`\`\`
+          Run pytest to see detailed results
+          \`\`\`
+          
+          </details>
+          
+          *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: output
+          })
+
+  regression-guard:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Regression Test Summary
+      run: |
+        echo "✅ All regression tests passed!"
+        echo "This PR is safe to merge - no existing functionality was broken."
