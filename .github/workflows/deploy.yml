@@ -146,23 +146,18 @@ jobs:
             exit 1
           fi
           
-          # Setup SSL and start bot with HTTPS support
-          echo "🔐 Setting up SSL certificates..."
-          mkdir -p certs
-          cd certs
-          if [ ! -f server.crt ]; then
-            openssl req -newkey rsa:2048 -sha256 -nodes -keyout server.key -x509 -days 365 -out server.crt \
-              -subj "/C=AT/ST=Tirol/L=Innsbruck/O=MGA/CN=${{ secrets.SSH_HOST }}"
-          fi
-          cd ..
+          # Simple PM2 restart without SSL complications
+          echo "🔄 Restarting bot process..."
           
-          # Install gunicorn if needed
-          pip3 install --user gunicorn
-          
-          # Restart or start the process with SSL
+          # Stop any existing process
           pm2 delete telegram-google || true
-          pm2 start "gunicorn --certfile=certs/server.crt --keyfile=certs/server.key --bind 0.0.0.0:8443 src.telegram_agent_google:app" \
-            --name telegram-google
+          pkill -f telegram_agent_google.py || true
+          
+          # Start fresh
+          pm2 start src/telegram_agent_google.py --name telegram-google --interpreter python3
+          
+          # Alternative: Run directly with Python
+          # nohup python3 src/telegram_agent_google.py > bot.log 2>&1 &
           
           pm2 save
           

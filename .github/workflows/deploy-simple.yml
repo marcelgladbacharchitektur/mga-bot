@@ -1,0 +1,79 @@
+name: Deploy Telegram Bot (Simple)
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+    - name: Create .env file
+      run: |
+        cat > .env <<EOF
+        TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
+        GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+        GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        GOOGLE_DRIVE_ROOT_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
+        SUPABASE_URL=${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+        EOF
+
+    - name: Deploy with rsync
+      run: |
+        rsync -avz --delete \
+          --include='*.py' \
+          --include='requirements.txt' \
+          --include='tests/' \
+          --include='tests/**' \
+          --include='.env' \
+          --exclude='.*' \
+          --exclude='__pycache__/' \
+          --exclude='*.pyc' \
+          --exclude='venv/' \
+          --exclude='github_deploy*' \
+          ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.TARGET_DIR }}/
+
+    - name: Post-deployment tasks
+      run: |
+        ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'bash -s' <<'EOF'
+          set -e
+          cd ${{ secrets.TARGET_DIR }}
+          
+          echo "📦 Installing dependencies..."
+          pip3 install -r requirements.txt
+          
+          echo "🔄 Managing PM2 process..."
+          
+          # Simple approach - just restart if exists, otherwise start
+          if pm2 list | grep -q "telegram-google"; then
+            echo "Restarting existing process..."
+            pm2 restart telegram-google --update-env
+          else
+            echo "Starting new process..."
+            # Use the actual file location that worked before
+            pm2 start src/telegram_agent_google.py --name telegram-google --interpreter python3
+          fi
+          
+          pm2 save
+          
+          echo "✅ Deployment completed!"
+          pm2 status
+          
+          # Show recent logs to debug
+          echo ""
+          echo "📝 Recent logs:"
+          pm2 logs telegram-google --lines 30 --nostream
+        EOF
