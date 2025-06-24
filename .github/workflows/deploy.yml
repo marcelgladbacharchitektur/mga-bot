@@ -146,13 +146,23 @@ jobs:
             exit 1
           fi
           
-          # Restart or start the process with correct path
-          if pm2 list | grep -q "telegram-google"; then
-            pm2 restart telegram-google --update-env
-          else
-            # Start with absolute path from deployment directory
-            pm2 start "${{ secrets.TARGET_DIR }}/src/telegram_agent_google.py" --name telegram-google --interpreter python3
+          # Setup SSL and start bot with HTTPS support
+          echo "🔐 Setting up SSL certificates..."
+          mkdir -p certs
+          cd certs
+          if [ ! -f server.crt ]; then
+            openssl req -newkey rsa:2048 -sha256 -nodes -keyout server.key -x509 -days 365 -out server.crt \
+              -subj "/C=AT/ST=Tirol/L=Innsbruck/O=MGA/CN=${{ secrets.SSH_HOST }}"
           fi
+          cd ..
+          
+          # Install gunicorn if needed
+          pip3 install --user gunicorn
+          
+          # Restart or start the process with SSL
+          pm2 delete telegram-google || true
+          pm2 start "gunicorn --certfile=certs/server.crt --keyfile=certs/server.key --bind 0.0.0.0:8443 src.telegram_agent_google:app" \
+            --name telegram-google
           
           pm2 save
           
