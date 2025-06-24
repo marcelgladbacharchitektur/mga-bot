@@ -17,6 +17,14 @@ jobs:
       with:
         python-version: '3.10'
 
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -24,11 +32,11 @@ jobs:
 
     - name: Run Tests
       env:
-        TELEGRAM_BOT_TOKEN: '${{ secrets.TELEGRAM_BOT_TOKEN }}'
-        GROQ_API_KEY: '${{ secrets.GROQ_API_KEY }}'
-        GOOGLE_SERVICE_ACCOUNT_JSON: '${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}'
-        SUPABASE_URL: '${{ secrets.SUPABASE_URL }}'
-        SUPABASE_ANON_KEY: '${{ secrets.SUPABASE_ANON_KEY }}'
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
       run: pytest tests/ -v
 
   deploy:
@@ -40,23 +48,48 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup SSH
+    - name: Validate secrets
+      run: |
+        if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then
+          echo "::error::SSH_PRIVATE_KEY secret is not set"
+          exit 1
+        fi
+        if [ -z "${{ secrets.SSH_HOST }}" ]; then
+          echo "::error::SSH_HOST secret is not set"
+          exit 1
+        fi
+        if [ -z "${{ secrets.SSH_USER }}" ]; then
+          echo "::error::SSH_USER secret is not set"
+          exit 1
+        fi
+        if [ -z "${{ secrets.TARGET_DIR }}" ]; then
+          echo "::error::TARGET_DIR secret is not set"
+          exit 1
+        fi
+
+    - name: Setup SSH Agent
+      uses: webfactory/ssh-agent@v0.8.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Add SSH Host to known_hosts
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
         ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
 
-    - name: Create .env file
+    - name: Create encoded .env file
       run: |
         cat > .env <<EOF
         TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}
         GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
-        GOOGLE_SERVICE_ACCOUNT_JSON=${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+        GOOGLE_SERVICE_ACCOUNT_JSON='${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}'
         GOOGLE_DRIVE_ROOT_FOLDER_ID=${{ secrets.GOOGLE_DRIVE_ROOT_FOLDER_ID }}
         SUPABASE_URL=${{ secrets.SUPABASE_URL }}
         SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
         EOF
+        
+        # Base64 encode the .env file for secure transfer
+        base64 -w 0 .env > .env.b64
 
     - name: Deploy with rsync
       run: |
@@ -66,27 +99,61 @@ jobs:
           --include='requirements.txt' \
           --include='tests/' \
           --include='tests/**' \
-          --include='.env' \
+          --include='.env.b64' \
           --exclude='.*' \
           --exclude='__pycache__/' \
           --exclude='*.pyc' \
           --exclude='venv/' \
           --exclude='github_deploy*' \
+          --exclude='.env' \
           ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ secrets.TARGET_DIR }}/
 
     - name: Post-deployment tasks
       run: |
-        ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'bash -s' <<'EOF'
-          set -e
+        ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'bash -s' <<'DEPLOY_SCRIPT'
+          set -euo pipefail
+          
+          # Function to handle errors
+          error_handler() {
+            echo "❌ Error occurred during deployment on line $1"
+            exit 1
+          }
+          trap 'error_handler $LINENO' ERR
+          
           cd ${{ secrets.TARGET_DIR }}
           
-          echo "📦 Installing dependencies..."
-          pip3 install -r requirements.txt
+          # Decode the .env file
+          echo "🔐 Setting up environment variables..."
+          base64 -d .env.b64 > .env
+          rm -f .env.b64
+          chmod 600 .env
           
-          echo "🔄 Restarting PM2 process..."
-          pm2 restart telegram-google --update-env || pm2 start telegram_agent_google.py --name telegram-google --interpreter python3
+          echo "📦 Installing dependencies..."
+          pip3 install --user -r requirements.txt
+          
+          echo "🔄 Managing PM2 process..."
+          # Check if PM2 is installed
+          if ! command -v pm2 &> /dev/null; then
+            echo "PM2 not found. Please install PM2 first."
+            exit 1
+          fi
+          
+          # Restart or start the process
+          if pm2 list | grep -q "telegram-google"; then
+            pm2 restart telegram-google --update-env
+          else
+            pm2 start telegram_agent_google.py --name telegram-google --interpreter python3
+          fi
+          
           pm2 save
           
-          echo "✅ Deployment completed!"
+          echo "✅ Deployment completed successfully!"
           pm2 list
-        EOF
+          pm2 logs telegram-google --lines 10 --nostream
+        DEPLOY_SCRIPT
+
+    - name: Cleanup
+      if: always()
+      run: |
+        rm -f .env .env.b64
+        # SSH agent cleanup is handled automatically by webfactory/ssh-agent
