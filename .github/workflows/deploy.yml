@@ -67,10 +67,18 @@ jobs:
           exit 1
         fi
 
-    - name: Setup SSH Agent
-      uses: webfactory/ssh-agent@v0.8.0
-      with:
-        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+        chmod 600 ~/.ssh/id_rsa
+        
+        # Test if the key is valid
+        ssh-keygen -y -f ~/.ssh/id_rsa > /dev/null || {
+          echo "::error::SSH key format error. Please ensure your SSH key is in PEM format."
+          echo "::error::If using a newer OpenSSH format, convert it with: ssh-keygen -p -f your_key -m PEM"
+          exit 1
+        }
 
     - name: Add SSH Host to known_hosts
       run: |
