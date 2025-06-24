@@ -851,6 +851,7 @@ if __name__ == '__main__':
     logger.info(f"💾 Storage: Google Drive ({GOOGLE_DRIVE_ROOT_FOLDER_ID})")
     logger.info(f"🗄️ Database: Supabase {'✅ Connected' if supabase_client else '❌ Not configured'}")
     logger.info(f"⏱️ Time Tracking: ✅ Enabled")
-    logger.info("✅ SSL Webhook ready on port 8443")
+    port = int(os.getenv('FLASK_PORT', '8443'))
+    logger.info(f"✅ Webhook ready on port {port}")
     
-    app.run(host='0.0.0.0', port=8443, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=False)
