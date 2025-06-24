@@ -1,9 +1,7 @@
 // src/routes/+page.server.ts
 import { supabase } from '$lib/supabase'
-import type { PageServerLoad } from './$types'
-import type { Project } from '$lib/supabase'
 
-export const load: PageServerLoad = async () => {
+export const load = async () => {
   // Fetch all projects sorted by created_at descending
   const { data: projects, error } = await supabase
     .from('projects')
@@ -13,11 +11,11 @@ export const load: PageServerLoad = async () => {
   if (error) {
     console.error('Error fetching projects:', error)
     return {
-      projects: [] as Project[]
+      projects: []
     }
   }
 
   return {
-    projects: projects as Project[]
+    projects: projects || []
   }
 }

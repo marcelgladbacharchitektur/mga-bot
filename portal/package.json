@@ -21,8 +21,7 @@
     "vite": "^5.0.0"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "@supabase/auth-helpers-sveltekit": "^0.10.0"
+    "@supabase/supabase-js": "^2.39.0"
   },
   "type": "module"
 }

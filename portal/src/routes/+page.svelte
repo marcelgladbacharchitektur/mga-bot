@@ -1,11 +1,9 @@
 <!-- src/routes/+page.svelte -->
-<script lang="ts">
-  import type { PageData } from './$types'
-  
-  export let data: PageData
+<script>
+  export let data
   
   // Format date for display
-  function formatDate(dateString: string): string {
+  function formatDate(dateString) {
     const date = new Date(dateString)
     return new Intl.DateTimeFormat('de-DE', {
       year: 'numeric',
