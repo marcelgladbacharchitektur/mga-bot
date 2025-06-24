@@ -146,18 +146,47 @@ jobs:
             exit 1
           fi
           
-          # Restart or start the process
+          # Restart or start the process with correct path
           if pm2 list | grep -q "telegram-google"; then
             pm2 restart telegram-google --update-env
           else
-            pm2 start telegram_agent_google.py --name telegram-google --interpreter python3
+            # Start with absolute path from deployment directory
+            pm2 start "${{ secrets.TARGET_DIR }}/src/telegram_agent_google.py" --name telegram-google --interpreter python3
           fi
           
           pm2 save
           
+          # Register Telegram webhook
+          echo ""
+          echo "🔗 Registering Telegram webhook..."
+          cd ${{ secrets.TARGET_DIR }}
+          export SERVER_HOST="${{ secrets.SSH_HOST }}"
+          python3 scripts/register_webhook.py || echo "⚠️  Webhook registration failed"
+          
           echo "✅ Deployment completed successfully!"
           pm2 list
           pm2 logs telegram-google --lines 10 --nostream
+          
+          # Debug: Check bot status
+          echo ""
+          echo "🔍 Debugging bot status..."
+          echo "========================="
+          
+          # Check if bot file exists
+          if [ -f "src/telegram_agent_google.py" ]; then
+            echo "✅ Bot file exists at src/telegram_agent_google.py"
+          else
+            echo "❌ Bot file not found!"
+            find . -name "telegram_agent_google.py" -type f
+          fi
+          
+          # Check PM2 status in detail
+          pm2 describe telegram-google || true
+          
+          # Try to start bot manually to see errors
+          echo ""
+          echo "🧪 Testing bot startup..."
+          timeout 5 python3 src/telegram_agent_google.py 2>&1 || true
         DEPLOY_SCRIPT
 
     - name: Cleanup
